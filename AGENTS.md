@@ -47,10 +47,10 @@ reduction and improved data quality for observability infrastructure.
 
 ## Nix flake (required for shell commands)
 
-This repository provides a [flake.nix](flake.nix) dev shell with native build dependencies,
-**rustup** (toolchain from [rust-toolchain.toml](rust-toolchain.toml)), and the same **pinned cargo
-tools** as CI via [scripts/environment/prepare.sh](scripts/environment/prepare.sh) (`cargo-binstall`
-→ `~/.cargo/bin`: `cross`, `cargo-nextest`, `vdev`, `dd-rust-license-tool`, etc.).
+This repository provides a [flake.nix](flake.nix) dev shell with native build dependencies and a
+**Rust toolchain** from [rust-toolchain.toml](rust-toolchain.toml) (via rust-overlay). CI and other
+setups may still use [scripts/environment/prepare.sh](scripts/environment/prepare.sh) for pinned
+cargo tools (`cross`, `cargo-nextest`, `vdev`, etc.); the flake does not install those.
 
 With [direnv](https://direnv.net/), `.envrc` runs `use flake` so entering the repo loads this
 environment automatically (`direnv allow` once).
@@ -63,13 +63,7 @@ flake environment unless an exception below applies.
 # Single command (preferred for agents)
 nix develop -c make check-clippy
 nix develop -c make package-x86_64-unknown-linux-musl-all
-
-# Minimal shell (rustup + cross + native libs only)
-nix develop --profile build -c make build
 ```
-
-First `nix develop` / `direnv` load may run `prepare.sh` once (network; cached under
-`~/.cache/vector/prepare-*`). Force reinstall: `VECTOR_FORCE_PREPARE=1 direnv reload`.
 
 **Exceptions** (do not require `nix develop`):
 
