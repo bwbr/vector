@@ -71,3 +71,7 @@ local/
 
 # vscode
 .vscode/
+
+
+# Nix
+.direnv/

@@ -45,6 +45,45 @@ reduction and improved data quality for observability infrastructure.
 - `/docs/` - Developer documentation
 - `/tests/` - Integration and E2E tests
 
+## Nix flake (required for shell commands)
+
+This repository provides a [flake.nix](flake.nix) dev shell with native build dependencies,
+**rustup** (toolchain from [rust-toolchain.toml](rust-toolchain.toml)), and the same **pinned cargo
+tools** as CI via [scripts/environment/prepare.sh](scripts/environment/prepare.sh) (`cargo-binstall`
+→ `~/.cargo/bin`: `cross`, `cargo-nextest`, `vdev`, `dd-rust-license-tool`, etc.).
+
+With [direnv](https://direnv.net/), `.envrc` runs `use flake` so entering the repo loads this
+environment automatically (`direnv allow` once).
+
+**Rule for agents:** Before running any `bash` / shell command in this repo (including `make`,
+`cargo`, `./scripts/...`, and `podman`/`docker` when used for Vector builds), run it **inside** the
+flake environment unless an exception below applies.
+
+```bash
+# Single command (preferred for agents)
+nix develop -c make check-clippy
+nix develop -c make package-x86_64-unknown-linux-musl-all
+
+# Minimal shell (rustup + cross + native libs only)
+nix develop --profile build -c make build
+```
+
+First `nix develop` / `direnv` load may run `prepare.sh` once (network; cached under
+`~/.cache/vector/prepare-*`). Force reinstall: `VECTOR_FORCE_PREPARE=1 direnv reload`.
+
+**Exceptions** (do not require `nix develop`):
+
+- Editing or reading files only (no command execution)
+- Pure `git` operations (`status`, `diff`, `log`, …)
+- Nix commands that manage the flake itself (`nix flake check`, `nix flake update`, …)
+- The user explicitly asks to run outside Nix
+
+If `nix` is unavailable, run [scripts/environment/prepare.sh](scripts/environment/prepare.sh) and
+see [docs/DEVELOPING.md](docs/DEVELOPING.md).
+
+Website/npm extras (`cue` 0.16.1, `markdownlint-cli2`): `prepare.sh --modules=cue,markdownlint-cli2`
+or `cd website` tooling as documented there.
+
 ## Development Workflow
 
 ### Iterative Development Process
@@ -231,6 +270,7 @@ See [docs/DEVELOPING.md](docs/DEVELOPING.md#integration-tests) for adding new in
 
 ### Key Files
 
+- `flake.nix` - Nix dev shell (use `nix develop -c …` for shell commands; see [Nix flake](#nix-flake-required-for-shell-commands))
 - `Makefile` - Common build/test/check targets
 - `vdev/` - Custom development CLI tool
 - `src/` - Rust source code
