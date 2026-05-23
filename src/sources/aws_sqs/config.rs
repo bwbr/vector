@@ -6,7 +6,7 @@ use vector_lib::{
     configurable::configurable_component,
     lookup::owned_value_path,
 };
-use vrl::value::Kind;
+use vrl::value::{Kind, kind::Collection};
 
 use crate::{
     aws::{auth::AwsAuthentication, create_client, region::RegionOrEndpoint},
@@ -146,6 +146,15 @@ impl SourceConfig for AwsSqsConfig {
                 &owned_value_path!("timestamp"),
                 Kind::timestamp().or_undefined(),
                 Some("timestamp"),
+            )
+            .with_source_metadata(
+                Self::NAME,
+                Some(LegacyKey::InsertIfEmpty(owned_value_path!(
+                    "message_attributes"
+                ))),
+                &owned_value_path!("message_attributes"),
+                Kind::object(Collection::empty().with_unknown(Kind::bytes())).or_undefined(),
+                None,
             );
 
         vec![SourceOutput::new_maybe_logs(

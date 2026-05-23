@@ -40,7 +40,6 @@ sinks:
       codec: "json"
       json:
         pretty: true
-
 # Vector's API (disabled by default)
 # Uncomment to try it out with the `vector top` command
 # api:

@@ -25,9 +25,16 @@
 
         rustChannel = (builtins.fromTOML (builtins.readFile ./rust-toolchain.toml)).toolchain.channel;
         rustToolchain = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+        runtimeLibs = with pkgs; [
+          openssl
+          zlib
+          cyrus_sasl
+          xxHash
+        ];
 
         shellHook = ''
           export PATH="${rustToolchain}/bin:''${HOME}/.cargo/bin:''${PATH}"
+          export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath runtimeLibs}:''${LD_LIBRARY_PATH:-}"
 
           # cross calls `rustup toolchain list`; keep rustup available without overriding Nix cargo.
           export PATH="${pkgs.rustup}/bin:''${PATH}"
@@ -43,6 +50,9 @@
           }"
 
           export LIBCLANG_PATH="${pkgs.llvmPackages.libclang.lib}/lib"
+          for clang_include in "${pkgs.llvmPackages.libclang.lib}"/lib/clang/*/include; do
+            export BINDGEN_EXTRA_CLANG_ARGS="-I''${clang_include} ''${BINDGEN_EXTRA_CLANG_ARGS:-}"
+          done
           export PROTOC="${pkgs.protobuf}/bin/protoc"
           export RUSTFLAGS="''${RUSTFLAGS} -C link-arg=-fuse-ld=mold"
           export PATH="${./scripts/environment/npm-tools}/node_modules/.bin:''${PATH}"
@@ -84,6 +94,7 @@
           rustToolchain
           rustup
           nodejs_22
+          nodePackages.prettier
           nixfmt-rfc-style
         ];
       in
@@ -91,6 +102,7 @@
         devShells.default = pkgs.mkShell {
           buildInputs = nativeDeps ++ baseTools;
           inherit shellHook;
+          hardeningDisable = [ "fortify" ];
           OPENSSL_NO_VENDOR = 1;
         };
 

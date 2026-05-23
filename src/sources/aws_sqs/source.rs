@@ -2,22 +2,24 @@ use std::{collections::HashMap, panic, str::FromStr, sync::Arc};
 
 use aws_sdk_sqs::{
     Client as SqsClient,
-    types::{DeleteMessageBatchRequestEntry, MessageSystemAttributeName},
+    types::{DeleteMessageBatchRequestEntry, MessageAttributeValue, MessageSystemAttributeName},
 };
+use bytes::Bytes;
 use chrono::{DateTime, TimeZone, Utc};
 use futures::{FutureExt, StreamExt};
 use tokio::{pin, select};
 use tracing_futures::Instrument;
 use vector_lib::{
-    config::LogNamespace,
+    config::{LegacyKey, LogNamespace},
     finalizer::UnorderedFinalizer,
     internal_event::{EventsReceived, Registered},
+    lookup::path,
 };
 
 use crate::{
     SourceSender,
     codecs::Decoder,
-    event::{BatchNotifier, BatchStatus},
+    event::{BatchNotifier, BatchStatus, Event, Value},
     internal_events::{
         EndpointBytesReceived, SqsMessageDeleteError, SqsMessageReceiveError, StreamClosedError,
     },
@@ -111,6 +113,7 @@ impl SqsSource {
             .wait_time_seconds(self.poll_secs as i32)
             .visibility_timeout(self.visibility_timeout_secs as i32)
             .message_system_attribute_names(MessageSystemAttributeName::from("SentTimestamp"))
+            .message_attribute_names("All")
             // I think this should be a known attribute
             // https://github.com/awslabs/aws-sdk-rust/issues/411
             .send()
@@ -147,6 +150,7 @@ impl SqsSource {
                         receipts_to_ack.push(receipt_handle);
                     }
                     let timestamp = get_timestamp(&message.attributes);
+                    let message_attributes = message.message_attributes;
                     // Error is logged by `vector_lib::codecs::Decoder`, no further handling
                     // is needed here.
                     let decoded = util::decode_message(
@@ -157,7 +161,11 @@ impl SqsSource {
                         &batch,
                         self.log_namespace,
                         &events_received,
-                    );
+                    )
+                    .map(|mut event| {
+                        add_message_attributes(&mut event, &message_attributes, self.log_namespace);
+                        event
+                    });
                     events.extend(decoded);
                 }
             }
@@ -201,6 +209,54 @@ fn get_timestamp(
     })
 }
 
+fn add_message_attributes(
+    event: &mut Event,
+    attributes: &Option<HashMap<String, MessageAttributeValue>>,
+    log_namespace: LogNamespace,
+) {
+    let Some(attributes) = attributes else {
+        return;
+    };
+
+    for (name, attribute) in attributes {
+        let Some(value) = message_attribute_value(attribute) else {
+            continue;
+        };
+
+        match event {
+            Event::Log(log) => {
+                log_namespace.insert_source_metadata(
+                    "aws_sqs",
+                    log,
+                    Some(LegacyKey::InsertIfEmpty(path!(
+                        "message_attributes",
+                        name.as_str()
+                    ))),
+                    path!("message_attributes", name.as_str()),
+                    value,
+                );
+            }
+            Event::Metric(_) | Event::Trace(_) => {
+                event
+                    .metadata_mut()
+                    .value_mut()
+                    .insert(path!("aws_sqs", "message_attributes", name.as_str()), value);
+            }
+        }
+    }
+}
+
+fn message_attribute_value(attribute: &MessageAttributeValue) -> Option<Value> {
+    attribute
+        .string_value()
+        .map(|value| Value::from(Bytes::copy_from_slice(value.as_bytes())))
+        .or_else(|| {
+            attribute
+                .binary_value()
+                .map(|value| Value::from(Bytes::copy_from_slice(value.as_ref())))
+        })
+}
+
 async fn delete_messages(client: SqsClient, receipts: Vec<String>, queue_url: String) {
     if !receipts.is_empty() {
         let mut batch = client.delete_message_batch().queue_url(queue_url);
@@ -223,7 +279,7 @@ async fn delete_messages(client: SqsClient, receipts: Vec<String>, queue_url: St
 #[cfg(test)]
 mod tests {
     use chrono::SecondsFormat;
-    use vector_lib::lookup::path;
+    use vector_lib::lookup::{event_path, path};
 
     use super::*;
     use crate::{
@@ -350,6 +406,76 @@ mod tests {
                     .single()
                     .expect("invalid timestamp")
             )
+        );
+    }
+
+    #[test]
+    fn test_add_message_attributes_vector_namespace() {
+        let mut event = Event::Log("test".into());
+        let attributes = Some(HashMap::from([
+            (
+                "correlation_id".to_string(),
+                MessageAttributeValue::builder()
+                    .data_type("String")
+                    .string_value("abc-123")
+                    .build()
+                    .expect("valid message attribute"),
+            ),
+            (
+                "encoded".to_string(),
+                MessageAttributeValue::builder()
+                    .data_type("Binary")
+                    .binary_value(aws_sdk_sqs::primitives::Blob::new(b"payload".to_vec()))
+                    .build()
+                    .expect("valid message attribute"),
+            ),
+        ]));
+
+        add_message_attributes(&mut event, &attributes, LogNamespace::Vector);
+
+        let log = event.as_log();
+        let metadata = log.metadata().value();
+        assert_eq!(
+            metadata
+                .get(path!(
+                    AwsSqsConfig::NAME,
+                    "message_attributes",
+                    "correlation_id"
+                ))
+                .unwrap()
+                .to_string_lossy(),
+            "abc-123"
+        );
+        assert_eq!(
+            metadata
+                .get(path!(AwsSqsConfig::NAME, "message_attributes", "encoded"))
+                .unwrap()
+                .to_string_lossy(),
+            "payload"
+        );
+    }
+
+    #[test]
+    fn test_add_message_attributes_legacy_namespace() {
+        let mut event = Event::Log("test".into());
+        let attributes = Some(HashMap::from([(
+            "correlation_id".to_string(),
+            MessageAttributeValue::builder()
+                .data_type("String")
+                .string_value("abc-123")
+                .build()
+                .expect("valid message attribute"),
+        )]));
+
+        add_message_attributes(&mut event, &attributes, LogNamespace::Legacy);
+
+        assert_eq!(
+            event
+                .as_log()
+                .get(event_path!("message_attributes", "correlation_id"))
+                .unwrap()
+                .to_string_lossy(),
+            "abc-123"
         );
     }
 }
