@@ -440,9 +440,10 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.git_ref }}
-      - name: Login to DockerHub
+      - name: Login to DigitalOcean
         uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
+          registry: registry.digitalocean.com 
           username: ${{ secrets.CI_DOCKER_USERNAME }}
           password: ${{ secrets.CI_DOCKER_PASSWORD }}
       - name: Login to GitHub Container Registry
@@ -472,7 +473,7 @@ jobs:
       - name: Build and publish Docker images
         env:
           PLATFORM: "linux/amd64,linux/arm64,linux/arm/v7,linux/arm/v6"
-          REPOS: "timberio/vector,ghcr.io/vectordotdev/vector"
+          REPOS: "registry.digitalocean.com/bignerve/vector"
         uses: nick-fields/retry@ad984534de44a9489a53aefd81eb77f87c70dc60 # v4.0.0
         with:
           timeout_minutes: 15
